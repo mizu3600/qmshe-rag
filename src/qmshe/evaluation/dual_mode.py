@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import mean
+from statistics import stdev
 from time import perf_counter
 
 from qmshe.benchmarks.corpus_builder import build_example_corpus
@@ -28,36 +29,58 @@ class DualModeRecord:
     ndcg_at_10: float
     bridge_recall_at_20: float
     latency_ms: float
+    seed: int = 42
+    embedding_variant: str = "base"
+    reranker_variant: str = "none"
 
 
 class DualModeExperimentRunner:
     """Fair comparison: one corpus, encoder, top-k and generator policy across all modes."""
 
-    def __init__(self, encoder_dimension: int = 128):
-        self.encoder = LocalBenchmarkEncoder(encoder_dimension)
+    def __init__(
+        self, encoder_dimension: int = 128, encoder=None, reranker=None, seed: int = 42,
+        embedding_variant: str = "base", reranker_variant: str = "none",
+    ):
+        self.encoder = encoder or LocalBenchmarkEncoder(encoder_dimension)
+        self.reranker = reranker
+        self.seed = seed
+        self.embedding_variant = embedding_variant
+        self.reranker_variant = reranker_variant
 
     def run(self, suite: BenchmarkSuite, output_dir: str | Path) -> list[DualModeRecord]:
         records: list[DualModeRecord] = []
         for example in suite.examples:
             built = build_example_corpus(example)
-            hypergraph_pipeline = QMSHEPipeline(built.corpus, text_encoder=self.encoder)
+            hypergraph_pipeline = QMSHEPipeline(
+                built.corpus, text_encoder=self.encoder, reranker=self.reranker,
+                seed=self.seed, enable_remote_reranker=False,
+            )
             pipelines = [
                 ("vanilla_rag", "dense_bge_compatible", hypergraph_pipeline),
                 ("hypergraph", "evidence_hypergraph", hypergraph_pipeline),
                 ("graph", GraphProfile.ENTITY_RELATION.value, QMSGEGraphPipeline(
-                    built.corpus, text_encoder=self.encoder, profile=GraphProfile.ENTITY_RELATION
+                    built.corpus, text_encoder=self.encoder, profile=GraphProfile.ENTITY_RELATION,
+                    reranker=self.reranker, seed=self.seed, enable_remote_reranker=False,
                 )),
                 ("graph", GraphProfile.REIFIED_FACT.value, QMSGEGraphPipeline(
-                    built.corpus, text_encoder=self.encoder, profile=GraphProfile.REIFIED_FACT
+                    built.corpus, text_encoder=self.encoder, profile=GraphProfile.REIFIED_FACT,
+                    reranker=self.reranker, seed=self.seed, enable_remote_reranker=False,
                 )),
             ]
             for mode, profile, pipeline in pipelines:
                 pipeline.generator.client = None
                 started = perf_counter()
                 if mode == "vanilla_rag":
-                    query_vector = self.encoder.encode([example.question])[0]
+                    query_method = getattr(self.encoder, "encode_queries", self.encoder.encode)
+                    query_vector = query_method([example.question])[0]
                     hits = pipeline.raw_index.search(query_vector, 60, "vanilla-dense")
-                    facts = [hit.object_id for hit in hits if hit.object_id.startswith("fact_")][:20]
+                    facts = [hit.object_id for hit in hits if hit.object_id.startswith("fact_")]
+                    if self.reranker is not None:
+                        order = self.reranker.rank(
+                            example.question, [pipeline.text_by_id[item] for item in facts]
+                        )
+                        facts = [facts[index] for index in order]
+                    facts = facts[:20]
                     entities = [hit.object_id for hit in hits if hit.object_id.startswith("ent_")][:20]
                 else:
                     result = pipeline.query(example.question, top_k=20, return_debug=False)
@@ -77,6 +100,8 @@ class DualModeExperimentRunner:
                     ndcg_at_10=ndcg_at_k(facts, built.gold_fact_ids, 10),
                     bridge_recall_at_20=recall_at_k(entities, built.bridge_entity_ids, 20),
                     latency_ms=latency,
+                    seed=self.seed, embedding_variant=self.embedding_variant,
+                    reranker_variant=self.reranker_variant,
                 ))
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -94,10 +119,14 @@ def _summarize(records: list[DualModeRecord]) -> dict:
     for record in records:
         groups.setdefault(f"{record.mode}:{record.profile}", []).append(record)
     metrics = ("recall_at_10", "recall_at_20", "mrr", "ndcg_at_10", "bridge_recall_at_20", "latency_ms")
-    return {
-        name: {metric: mean(getattr(record, metric) for record in items) for metric in metrics}
-        for name, items in groups.items()
-    }
+    output = {}
+    for name, items in groups.items():
+        output[name] = {}
+        for metric in metrics:
+            values = [getattr(record, metric) for record in items]
+            output[name][metric] = mean(values)
+            output[name][f"{metric}_std"] = stdev(values) if len(values) > 1 else 0.0
+    return output
 
 
 def _render_report(suite: BenchmarkSuite, summary: dict) -> str:

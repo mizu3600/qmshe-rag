@@ -24,3 +24,19 @@ class TextEncoder:
         if not self.allow_fallback:
             raise ProviderError("remote embedding is unavailable and fallback is disabled")
         return self.fallback.embed(texts)
+
+    def encode_documents(self, texts: Sequence[str]) -> np.ndarray:
+        return self.encode(texts)
+
+    def encode_queries(self, texts: Sequence[str]) -> np.ndarray:
+        return self.encode(texts)
+
+
+def encode_documents(encoder, texts: Sequence[str]) -> np.ndarray:
+    method = getattr(encoder, "encode_documents", encoder.encode)
+    return method(texts)
+
+
+def encode_queries(encoder, texts: Sequence[str]) -> np.ndarray:
+    method = getattr(encoder, "encode_queries", encoder.encode)
+    return method(texts)

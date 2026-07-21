@@ -8,7 +8,7 @@ import torch
 
 from qmshe.embedding.chebyshev import scipy_to_torch_sparse
 from qmshe.embedding.graph_encoder import GraphSpectralSemanticEncoder
-from qmshe.embedding.text_encoder import TextEncoder
+from qmshe.embedding.text_encoder import TextEncoder, encode_documents, encode_queries
 from qmshe.generation.generator import EvidenceGenerator
 from qmshe.graph.ordinary import GraphProfile, build_ordinary_graph
 from qmshe.graph.ordinary_incremental import plan_graph_incremental_update
@@ -51,7 +51,8 @@ class QMSGEGraphPipeline:
     def __init__(
         self, corpus: Corpus, text_encoder: TextEncoder | None = None,
         profile: GraphProfile | str = GraphProfile.REIFIED_FACT,
-        index_strategy: str = "hybrid",
+        index_strategy: str = "hybrid", reranker=None, seed: int = 42,
+        enable_remote_reranker: bool = True,
     ):
         if not corpus.entities or not corpus.evidence_hyperedges:
             raise ValueError("corpus must contain entities and evidence facts")
@@ -61,6 +62,9 @@ class QMSGEGraphPipeline:
             raise ValueError("index_strategy must be single, multi or hybrid")
         self.index_strategy = index_strategy
         self.text_encoder = text_encoder or TextEncoder()
+        self.reranker = reranker
+        self.seed = seed
+        self.enable_remote_reranker = enable_remote_reranker
         self.generator = EvidenceGenerator()
         self.version = ArtifactVersion.create()
         self.query_cache = VersionedQueryCache(max_items=1024)
@@ -71,10 +75,10 @@ class QMSGEGraphPipeline:
         self.artifacts = build_ordinary_graph(self.corpus, self.profile)
         self.node_ids = self.artifacts.node_ids
         self.node_texts = self.artifacts.node_texts
-        raw_np = self.text_encoder.encode(self.node_texts)
+        raw_np = encode_documents(self.text_encoder, self.node_texts)
         self.raw_features = torch.tensor(raw_np, dtype=torch.float32)
         self.propagation = scipy_to_torch_sparse(self.artifacts.propagation)
-        torch.manual_seed(42)
+        torch.manual_seed(self.seed)
         self.model = GraphSpectralSemanticEncoder(
             self.raw_features.shape[1], raw_dim=64, band_dim=32
         )
@@ -111,7 +115,7 @@ class QMSGEGraphPipeline:
                         expanded.add(entity_id)
             positive_indices = [node_index[item] for item in expanded if item in node_index]
             if positive_indices:
-                query = torch.tensor(self.text_encoder.encode([question])[0], dtype=torch.float32)
+                query = torch.tensor(encode_queries(self.text_encoder, [question])[0], dtype=torch.float32)
                 prepared.append((query, positive_indices))
         if not prepared:
             raise ValueError("no training positives exist in the ordinary graph index")
@@ -150,7 +154,7 @@ class QMSGEGraphPipeline:
         if cached is not None:
             self.metrics.observe(cached, (perf_counter() - started) * 1000, cache_hit=True)
             return cached
-        query_np = self.text_encoder.encode([question])[0]
+        query_np = encode_queries(self.text_encoder, [question])[0]
         query_tensor = torch.tensor(query_np, dtype=torch.float32)
         with torch.no_grad():
             query_parts, gate = self.model.encode_query_parts(
@@ -222,6 +226,13 @@ class QMSGEGraphPipeline:
     def _remote_rerank(self, question: str, fact_ids: list[str]) -> list[str]:
         if not fact_ids:
             return []
+        if self.reranker is not None:
+            order = self.reranker.rank(
+                question, [self.fact_text_by_id[item] for item in fact_ids]
+            )
+            return [fact_ids[index] for index in order]
+        if not self.enable_remote_reranker:
+            return fact_ids
         try:
             results = SiliconFlowClient().rerank(
                 question, [self.fact_text_by_id[item] for item in fact_ids], top_n=len(fact_ids)
@@ -245,7 +256,7 @@ class QMSGEGraphPipeline:
         new_artifacts = build_ordinary_graph(updated, self.profile)
         plan = plan_graph_incremental_update(self.artifacts.graph, new_artifacts.graph)
         new_texts = new_artifacts.node_texts
-        new_raw = torch.tensor(self.text_encoder.encode(new_texts), dtype=torch.float32)
+        new_raw = torch.tensor(encode_documents(self.text_encoder, new_texts), dtype=torch.float32)
         new_propagation = scipy_to_torch_sparse(new_artifacts.propagation)
         with torch.no_grad():
             recalculated = self.model.encode_nodes(new_raw, new_propagation)

@@ -84,3 +84,4 @@ uv run python scripts/reproduce_delivery.py --limit 5
 
 Phase 3–5 的实现、真实小样本结果和限制见 `docs/PHASES_3_5.md`。
 远程部署与 LoRA 实测结果见 `docs/REMOTE_DEPLOYMENT.md`。
+多随机种子及 embedding/reranker 微调消融协议见 `docs/FINETUNE_ABLATION.md`。

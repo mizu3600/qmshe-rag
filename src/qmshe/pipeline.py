@@ -9,7 +9,7 @@ import torch
 from qmshe.embedding.chebyshev import scipy_to_torch_sparse
 from qmshe.embedding.joint_encoder import JointSpectralSemanticEncoder
 from qmshe.embedding.query_gate import QueryRelationGate
-from qmshe.embedding.text_encoder import TextEncoder
+from qmshe.embedding.text_encoder import TextEncoder, encode_documents, encode_queries
 from qmshe.generation.generator import EvidenceGenerator
 from qmshe.graph.evidence_graph import build_evidence_graph, evidence_paths
 from qmshe.graph.incidence import build_incidence, build_role_incidence
@@ -51,11 +51,17 @@ class QueryResult:
 
 
 class QMSHEPipeline:
-    def __init__(self, corpus: Corpus, text_encoder: TextEncoder | None = None):
+    def __init__(
+        self, corpus: Corpus, text_encoder: TextEncoder | None = None,
+        reranker=None, seed: int = 42, enable_remote_reranker: bool = True,
+    ):
         if not corpus.entities or not corpus.evidence_hyperedges:
             raise ValueError("corpus must contain entities and evidence hyperedges")
         self.corpus = corpus
         self.text_encoder = text_encoder or TextEncoder()
+        self.reranker = reranker
+        self.seed = seed
+        self.enable_remote_reranker = enable_remote_reranker
         self.generator = EvidenceGenerator()
         self.evidence_graph = build_evidence_graph(corpus)
         self.version = ArtifactVersion.create()
@@ -72,7 +78,7 @@ class QMSHEPipeline:
             fact.hyperedge_id for fact in self.corpus.evidence_hyperedges
         ]
         self.object_texts = entity_texts + fact_texts
-        features_np = self.text_encoder.encode(self.object_texts)
+        features_np = encode_documents(self.text_encoder, self.object_texts)
         features = torch.tensor(features_np, dtype=torch.float32)
         incidence = build_incidence(self.corpus.entities, self.corpus.evidence_hyperedges)
         fact_features = features_np[len(self.corpus.entities) :]
@@ -93,7 +99,7 @@ class QMSHEPipeline:
         )
         laplacian = scipy_to_torch_sparse(self.laplacian_scipy)
         self.laplacian = laplacian
-        torch.manual_seed(42)
+        torch.manual_seed(self.seed)
         self.model = JointSpectralSemanticEncoder(features.shape[1], raw_dim=64, band_dim=32, order=5)
         self.model.eval()
         with torch.no_grad():
@@ -134,7 +140,7 @@ class QMSHEPipeline:
         for question, positive_ids in training_pairs:
             indices = [object_index[item] for item in positive_ids if item in object_index]
             if indices:
-                query = torch.tensor(self.text_encoder.encode([question])[0], dtype=torch.float32)
+                query = torch.tensor(encode_queries(self.text_encoder, [question])[0], dtype=torch.float32)
                 excluded = set(indices)
                 semantic_order = torch.argsort(self.raw_features @ query, descending=True).tolist()
                 semantic = [index for index in semantic_order if index not in excluded][:4]
@@ -241,7 +247,7 @@ class QMSHEPipeline:
         if cached is not None:
             self.metrics.observe(cached, (perf_counter() - started) * 1000, cache_hit=True)
             return cached
-        query_np = self.text_encoder.encode([question])[0]
+        query_np = encode_queries(self.text_encoder, [question])[0]
         query_tensor = torch.tensor(query_np, dtype=torch.float32)
         relation_weights, query_node_bands = self._relation_conditioned_bands(query_tensor)
         with torch.no_grad():
@@ -313,7 +319,7 @@ class QMSHEPipeline:
         new_ids = [entity.entity_id for entity in new_entities] + [fact.hyperedge_id for fact in new_facts]
         new_texts = [f"{entity.canonical_name}. {entity.description}" for entity in new_entities]
         new_texts.extend(verbalize_fact(fact, names) for fact in new_facts)
-        raw_np = self.text_encoder.encode(new_texts)
+        raw_np = encode_documents(self.text_encoder, new_texts)
         existing_bands = torch.stack(
             [self.node_bands["low"], self.node_bands["mid"], self.node_bands["high"]], dim=1
         ).numpy()
@@ -395,6 +401,15 @@ class QMSHEPipeline:
     def _remote_rerank(self, question: str, hits):
         fact_hits = [hit for hit in hits if hit.object_id.startswith("fact_")][:50]
         if not fact_hits:
+            return hits
+        if self.reranker is not None:
+            order = self.reranker.rank(
+                question, [self.text_by_id[hit.object_id] for hit in fact_hits]
+            )
+            local_order = [fact_hits[index] for index in order]
+            remaining = [hit for hit in hits if hit.object_id not in {x.object_id for x in local_order}]
+            return local_order + remaining
+        if not self.enable_remote_reranker:
             return hits
         try:
             client = SiliconFlowClient()
