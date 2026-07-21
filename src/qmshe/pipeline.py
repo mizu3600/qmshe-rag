@@ -238,10 +238,16 @@ class QMSHEPipeline:
         self.query_cache.clear()
         return history
 
-    def query(self, question: str, top_k: int = 12, return_debug: bool = True) -> QueryResult:
+    def query(
+        self, question: str, top_k: int = 12, return_debug: bool = True,
+        candidate_count: int | None = None,
+    ) -> QueryResult:
         started = perf_counter()
         cache_key = self.query_cache.key(
-            question, self.version, {"top_k": top_k, "return_debug": return_debug}
+            question, self.version, {
+                "top_k": top_k, "return_debug": return_debug,
+                "candidate_count": candidate_count,
+            }
         )
         cached = self.query_cache.get(cache_key)
         if cached is not None:
@@ -254,15 +260,18 @@ class QMSHEPipeline:
             query_vector, gate = self.model.encode_query(
                 query_tensor, self.raw_features, query_node_bands, top_m=64, temperature=0.05
             )
-        qmshe_hits = self.qmshe_index.search(query_vector.numpy(), max(30, top_k * 3), "qmshe")
+        retrieval_count = candidate_count or max(30, top_k * 3)
+        if retrieval_count < top_k:
+            raise ValueError("candidate_count must be at least top_k")
+        qmshe_hits = self.qmshe_index.search(query_vector.numpy(), retrieval_count, "qmshe")
         relation_full = torch.cat([
             self.node_bands["raw"], query_node_bands["low"], query_node_bands["mid"], query_node_bands["high"]
         ], dim=-1).numpy()
         relation_hits = ExactVectorIndex(self.object_ids, relation_full).search(
-            query_vector.numpy(), max(30, top_k * 3), "relation-aware"
+            query_vector.numpy(), retrieval_count, "relation-aware"
         )
-        raw_hits = self.raw_index.search(query_np, max(30, top_k * 3), "raw")
-        bm25_hits = self.bm25.search(question, max(30, top_k * 3))
+        raw_hits = self.raw_index.search(query_np, retrieval_count, "raw")
+        bm25_hits = self.bm25.search(question, retrieval_count)
         fused = reciprocal_rank_fusion([qmshe_hits, relation_hits, raw_hits, bm25_hits])
         reranked = graph_rerank(fused[:50], self.evidence_graph)
         reranked = self._remote_rerank(question, reranked)

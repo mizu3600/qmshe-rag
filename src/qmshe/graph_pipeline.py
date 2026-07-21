@@ -144,11 +144,17 @@ class QMSGEGraphPipeline:
         self.query_cache.clear()
         return history
 
-    def query(self, question: str, top_k: int = 12, return_debug: bool = True) -> GraphQueryResult:
+    def query(
+        self, question: str, top_k: int = 12, return_debug: bool = True,
+        candidate_count: int | None = None,
+    ) -> GraphQueryResult:
         started = perf_counter()
         cache_key = self.query_cache.key(
             question, self.version,
-            {"mode": "graph", "profile": self.profile.value, "top_k": top_k, "debug": return_debug},
+            {
+                "mode": "graph", "profile": self.profile.value, "top_k": top_k,
+                "debug": return_debug, "candidate_count": candidate_count,
+            },
         )
         cached = self.query_cache.get(cache_key)
         if cached is not None:
@@ -164,7 +170,9 @@ class QMSGEGraphPipeline:
                 gate[index] * query_parts[name]
                 for index, name in enumerate(("raw", "low", "mid", "high"))
             ])
-        candidate_count = max(30, top_k * 3)
+        candidate_count = candidate_count or max(30, top_k * 3)
+        if candidate_count < top_k:
+            raise ValueError("candidate_count must be at least top_k")
         retrieval_lists = []
         if self.index_strategy in {"single", "hybrid"}:
             retrieval_lists.append(

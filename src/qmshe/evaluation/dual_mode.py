@@ -10,7 +10,14 @@ from time import perf_counter
 from qmshe.benchmarks.corpus_builder import build_example_corpus
 from qmshe.benchmarks.schemas import BenchmarkSuite
 from qmshe.evaluation.experiment import LocalBenchmarkEncoder
-from qmshe.evaluation.retrieval_metrics import ndcg_at_k, recall_at_k, reciprocal_rank
+from qmshe.evaluation.retrieval_metrics import (
+    complete_at_k,
+    hit_at_k,
+    ndcg_at_k,
+    precision_at_k,
+    recall_at_k,
+    reciprocal_rank,
+)
 from qmshe.graph.ordinary import GraphProfile
 from qmshe.graph_pipeline import QMSGEGraphPipeline
 from qmshe.pipeline import QMSHEPipeline
@@ -23,8 +30,26 @@ class DualModeRecord:
     profile: str
     hop_count: int
     query_type: str
+    recall_at_5: float
     recall_at_10: float
     recall_at_20: float
+    recall_at_30: float
+    recall_at_40: float
+    precision_at_5: float
+    precision_at_10: float
+    precision_at_20: float
+    precision_at_30: float
+    precision_at_40: float
+    hit_at_5: float
+    hit_at_10: float
+    hit_at_20: float
+    hit_at_30: float
+    hit_at_40: float
+    complete_at_5: float
+    complete_at_10: float
+    complete_at_20: float
+    complete_at_30: float
+    complete_at_40: float
     mrr: float
     ndcg_at_10: float
     bridge_recall_at_20: float
@@ -80,10 +105,12 @@ class DualModeExperimentRunner:
                             example.question, [pipeline.text_by_id[item] for item in facts]
                         )
                         facts = [facts[index] for index in order]
-                    facts = facts[:20]
+                    facts = facts[:40]
                     entities = [hit.object_id for hit in hits if hit.object_id.startswith("ent_")][:20]
                 else:
-                    result = pipeline.query(example.question, top_k=20, return_debug=False)
+                    result = pipeline.query(
+                        example.question, top_k=40, return_debug=False, candidate_count=60
+                    )
                     if mode == "hypergraph":
                         facts = result.retrieved_hyperedges
                         entities = result.retrieved_entities
@@ -94,8 +121,26 @@ class DualModeExperimentRunner:
                 records.append(DualModeRecord(
                     example_id=example.example_id, mode=mode, profile=profile,
                     hop_count=example.hop_count, query_type=example.query_type,
+                    recall_at_5=recall_at_k(facts, built.gold_fact_ids, 5),
                     recall_at_10=recall_at_k(facts, built.gold_fact_ids, 10),
                     recall_at_20=recall_at_k(facts, built.gold_fact_ids, 20),
+                    recall_at_30=recall_at_k(facts, built.gold_fact_ids, 30),
+                    recall_at_40=recall_at_k(facts, built.gold_fact_ids, 40),
+                    precision_at_5=precision_at_k(facts, built.gold_fact_ids, 5),
+                    precision_at_10=precision_at_k(facts, built.gold_fact_ids, 10),
+                    precision_at_20=precision_at_k(facts, built.gold_fact_ids, 20),
+                    precision_at_30=precision_at_k(facts, built.gold_fact_ids, 30),
+                    precision_at_40=precision_at_k(facts, built.gold_fact_ids, 40),
+                    hit_at_5=hit_at_k(facts, built.gold_fact_ids, 5),
+                    hit_at_10=hit_at_k(facts, built.gold_fact_ids, 10),
+                    hit_at_20=hit_at_k(facts, built.gold_fact_ids, 20),
+                    hit_at_30=hit_at_k(facts, built.gold_fact_ids, 30),
+                    hit_at_40=hit_at_k(facts, built.gold_fact_ids, 40),
+                    complete_at_5=complete_at_k(facts, built.gold_fact_ids, 5),
+                    complete_at_10=complete_at_k(facts, built.gold_fact_ids, 10),
+                    complete_at_20=complete_at_k(facts, built.gold_fact_ids, 20),
+                    complete_at_30=complete_at_k(facts, built.gold_fact_ids, 30),
+                    complete_at_40=complete_at_k(facts, built.gold_fact_ids, 40),
                     mrr=reciprocal_rank(facts, built.gold_fact_ids),
                     ndcg_at_10=ndcg_at_k(facts, built.gold_fact_ids, 10),
                     bridge_recall_at_20=recall_at_k(entities, built.bridge_entity_ids, 20),
@@ -118,7 +163,14 @@ def _summarize(records: list[DualModeRecord]) -> dict:
     groups: dict[str, list[DualModeRecord]] = {}
     for record in records:
         groups.setdefault(f"{record.mode}:{record.profile}", []).append(record)
-    metrics = ("recall_at_10", "recall_at_20", "mrr", "ndcg_at_10", "bridge_recall_at_20", "latency_ms")
+    metrics = (
+        "recall_at_5", "recall_at_10", "recall_at_20", "recall_at_30", "recall_at_40",
+        "precision_at_5", "precision_at_10", "precision_at_20", "precision_at_30",
+        "precision_at_40", "hit_at_5", "hit_at_10", "hit_at_20", "hit_at_30",
+        "hit_at_40", "complete_at_5", "complete_at_10", "complete_at_20",
+        "complete_at_30", "complete_at_40", "mrr", "ndcg_at_10",
+        "bridge_recall_at_20", "latency_ms",
+    )
     output = {}
     for name, items in groups.items():
         output[name] = {}
@@ -133,13 +185,14 @@ def _render_report(suite: BenchmarkSuite, summary: dict) -> str:
     rows = [
         f"# {suite.name} Graph/Hypergraph fair comparison", "",
         f"Examples: {len(suite.examples)}", "",
-        "| Mode | R@10 | R@20 | MRR | nDCG@10 | Bridge@20 | Latency ms |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Mode | R@5 | R@10 | R@20 | R@30 | R@40 | Hit@10 | Complete@20 | MRR |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name, item in summary.items():
         rows.append(
-            f"| {name} | {item['recall_at_10']:.4f} | {item['recall_at_20']:.4f} | "
-            f"{item['mrr']:.4f} | {item['ndcg_at_10']:.4f} | "
-            f"{item['bridge_recall_at_20']:.4f} | {item['latency_ms']:.2f} |"
+            f"| {name} | {item['recall_at_5']:.4f} | {item['recall_at_10']:.4f} | "
+            f"{item['recall_at_20']:.4f} | {item['recall_at_30']:.4f} | "
+            f"{item['recall_at_40']:.4f} | {item['hit_at_10']:.4f} | "
+            f"{item['complete_at_20']:.4f} | {item['mrr']:.4f} |"
         )
     return "\n".join(rows) + "\n"

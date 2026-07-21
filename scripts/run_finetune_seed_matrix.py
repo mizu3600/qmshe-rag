@@ -114,7 +114,13 @@ def _aggregate(records):
     for record in records:
         key = (record.embedding_variant, record.reranker_variant, record.mode, record.profile)
         grouped.setdefault(key, {}).setdefault(record.seed, []).append(record)
-    metrics = ("recall_at_10", "recall_at_20", "mrr", "ndcg_at_10", "bridge_recall_at_20")
+    metrics = (
+        "recall_at_5", "recall_at_10", "recall_at_20", "recall_at_30", "recall_at_40",
+        "precision_at_5", "precision_at_10", "precision_at_20", "precision_at_30",
+        "precision_at_40", "hit_at_5", "hit_at_10", "hit_at_20", "hit_at_30",
+        "hit_at_40", "complete_at_5", "complete_at_10", "complete_at_20",
+        "complete_at_30", "complete_at_40", "mrr", "ndcg_at_10", "bridge_recall_at_20",
+    )
     output = {}
     for key, seed_groups in grouped.items():
         name = ":".join(map(str, key))
@@ -213,6 +219,22 @@ def _render(summary, effects, significance, examples, seeds):
             f"{item['recall_at_20_mean']:.4f}±{item['recall_at_20_std']:.4f} | "
             f"{item['mrr_mean']:.4f}±{item['mrr_std']:.4f} | "
             f"{item['ndcg_at_10_mean']:.4f}±{item['ndcg_at_10_std']:.4f} |"
+        )
+    rows.extend([
+        "", "## Multi-k retrieval metrics", "",
+        "| Embedding | Reranker | System | R@5 | R@10 | R@20 | R@30 | R@40 | "
+        "P@10 | P@20 | Hit@10 | Complete@20 | Complete@40 |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+    for name, item in summary.items():
+        embedding, reranker, mode, profile = name.split(":", 3)
+        rows.append(
+            f"| {embedding} | {reranker} | {mode}/{profile} | "
+            f"{item['recall_at_5_mean']:.4f} | {item['recall_at_10_mean']:.4f} | "
+            f"{item['recall_at_20_mean']:.4f} | {item['recall_at_30_mean']:.4f} | "
+            f"{item['recall_at_40_mean']:.4f} | {item['precision_at_10_mean']:.4f} | "
+            f"{item['precision_at_20_mean']:.4f} | {item['hit_at_10_mean']:.4f} | "
+            f"{item['complete_at_20_mean']:.4f} | {item['complete_at_40_mean']:.4f} |"
         )
     rows.extend(["", "## Recall@20 ablation effects", "",
                  "| System | Embedding only | Reranker only | Joint | Interaction |",
