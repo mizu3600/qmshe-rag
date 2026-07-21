@@ -238,6 +238,33 @@ class QMSHEPipeline:
         self.query_cache.clear()
         return history
 
+    def load_stage_a_checkpoint(self, checkpoint: str | Path | dict) -> None:
+        payload = (
+            torch.load(checkpoint, map_location="cpu", weights_only=True)
+            if isinstance(checkpoint, (str, Path)) else checkpoint
+        )
+        if payload.get("mode") != "hypergraph":
+            raise ValueError("Stage A checkpoint is not a hypergraph checkpoint")
+        if payload.get("input_dim") != self.raw_features.shape[1]:
+            raise ValueError("Stage A checkpoint encoder dimension does not match")
+        checkpoint_roles = payload.get("roles", [])
+        if checkpoint_roles != self.role_names:
+            raise ValueError(
+                f"Stage A checkpoint roles {checkpoint_roles} do not match {self.role_names}"
+            )
+        self.model.load_state_dict(payload["model"])
+        self.relation_gate.load_state_dict(payload["relation_gate"])
+        self.model.eval()
+        self.relation_gate.eval()
+        with torch.no_grad():
+            self.node_bands = self.model.encode_nodes(self.raw_features, self.laplacian)
+            self.role_node_bands = {
+                role: self.model.encode_nodes(self.raw_features, laplacian)
+                for role, laplacian in self.role_laplacians.items()
+            }
+        self.qmshe_index = ExactVectorIndex(self.object_ids, self.node_bands["full"].numpy())
+        self.query_cache.clear()
+
     def query(
         self, question: str, top_k: int = 12, return_debug: bool = True,
         candidate_count: int | None = None,

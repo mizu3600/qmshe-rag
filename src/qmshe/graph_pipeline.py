@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 
 import networkx as nx
@@ -143,6 +144,24 @@ class QMSGEGraphPipeline:
         self._rebuild_retrievers()
         self.query_cache.clear()
         return history
+
+    def load_stage_a_checkpoint(self, checkpoint: str | Path | dict) -> None:
+        payload = (
+            torch.load(checkpoint, map_location="cpu", weights_only=True)
+            if isinstance(checkpoint, (str, Path)) else checkpoint
+        )
+        if payload.get("mode") != "graph":
+            raise ValueError("Stage A checkpoint is not an ordinary-graph checkpoint")
+        if payload.get("profile") != self.profile.value:
+            raise ValueError("Stage A checkpoint graph profile does not match")
+        if payload.get("input_dim") != self.raw_features.shape[1]:
+            raise ValueError("Stage A checkpoint encoder dimension does not match")
+        self.model.load_state_dict(payload["model"])
+        self.model.eval()
+        with torch.no_grad():
+            self.node_bands = self.model.encode_nodes(self.raw_features, self.propagation)
+        self._rebuild_retrievers()
+        self.query_cache.clear()
 
     def query(
         self, question: str, top_k: int = 12, return_debug: bool = True,
