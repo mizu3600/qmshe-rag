@@ -26,6 +26,7 @@ class BuiltBenchmarkCorpus:
 class BuiltBenchmarkSuiteCorpus:
     corpus: Corpus
     training_pairs: list[tuple[str, set[str]]]
+    bridge_by_question: dict[str, set[str]]
 
 
 def build_example_corpus(example: BenchmarkExample) -> BuiltBenchmarkCorpus:
@@ -98,6 +99,7 @@ def build_example_corpus(example: BenchmarkExample) -> BuiltBenchmarkCorpus:
 def build_suite_corpus(examples: list[BenchmarkExample]) -> BuiltBenchmarkSuiteCorpus:
     documents, chunks, entities, facts = {}, {}, {}, {}
     training_pairs = []
+    bridge_by_question = {}
     for example in examples:
         built = build_example_corpus(example)
         documents.update((document.document_id, document) for document in built.corpus.documents)
@@ -106,12 +108,13 @@ def build_suite_corpus(examples: list[BenchmarkExample]) -> BuiltBenchmarkSuiteC
         facts.update((fact.hyperedge_id, fact) for fact in built.corpus.evidence_hyperedges)
         if built.gold_fact_ids:
             training_pairs.append((example.question, built.gold_fact_ids))
+            bridge_by_question[example.question] = built.bridge_entity_ids
     return BuiltBenchmarkSuiteCorpus(
         corpus=Corpus(
             documents=list(documents.values()), chunks=list(chunks.values()), entities=list(entities.values()),
             evidence_hyperedges=list(facts.values()), graph_version="benchmark-suite-v1",
         ),
-        training_pairs=training_pairs,
+        training_pairs=training_pairs, bridge_by_question=bridge_by_question,
     )
 
 

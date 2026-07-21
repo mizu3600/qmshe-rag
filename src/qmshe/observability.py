@@ -18,12 +18,15 @@ class RuntimeMetrics:
         with self._lock:
             self.queries += 1
             self.cache_hits += int(cache_hit)
-            self.no_evidence += int(not result.retrieved_hyperedges)
+            evidence = getattr(result, "retrieved_hyperedges", None)
+            if evidence is None:
+                evidence = getattr(result, "retrieved_facts", [])
+            self.no_evidence += int(not evidence)
             self.latencies_ms.append(latency_ms)
             self.citations += len(result.citations)
             for name, value in result.band_weights.items():
                 self.band_totals[name] += value
-            for name, value in result.relation_weights.items():
+            for name, value in getattr(result, "relation_weights", {}).items():
                 self.relation_totals[name] += value
 
     def snapshot(self) -> dict:
@@ -46,4 +49,3 @@ def _percentile(values: list[float], quantile: float) -> float:
     if not values:
         return 0.0
     return values[min(len(values) - 1, math.ceil(len(values) * quantile) - 1)]
-

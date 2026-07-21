@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,7 +22,7 @@ def run_evaluation(pipeline: QMSHEPipeline = Depends(get_pipeline)) -> dict:
     _runs[run_id] = {
         "run_id": run_id,
         "status": "completed",
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "metrics": metrics,
     }
     return _runs[run_id]
@@ -33,4 +33,3 @@ def get_evaluation(run_id: str) -> dict:
     if run_id not in _runs:
         raise HTTPException(status_code=404, detail="evaluation run not found")
     return _runs[run_id]
-

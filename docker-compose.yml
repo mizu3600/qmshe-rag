@@ -1,4 +1,25 @@
 services:
+  api:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OMP_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+    ports: ["127.0.0.1:${QMSXE_API_PORT:-18081}:8000"]
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
   postgres:
     image: postgres:16-alpine
     environment:

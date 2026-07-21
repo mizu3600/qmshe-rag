@@ -1,6 +1,20 @@
 project:
   name: qmshe-rag
   seed: 42
+mode:
+  default: hypergraph
+  enabled: [hypergraph, graph]
+ordinary_graph:
+  profile: reified_fact
+  profiles: [entity_relation, reified_fact]
+  index_strategy: hybrid
+  index_strategies: [single, multi, hybrid]
+  propagation_hops: 2
+  raw_residual: true
+  bands: [low, mid, high]
+  local_update_hops: 2
+  full_rebuild_node_growth: 0.03
+  full_rebuild_edge_growth: 0.05
 data:
   chunk_tokens: 512
   min_tokens: 160
@@ -57,4 +71,3 @@ loss:
   reconstruction: 0.05
   diversity: 0.01
   gate: 0.01
-

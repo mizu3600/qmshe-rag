@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "qmshe-rag"
 version = "0.1.0"
-description = "Query-adaptive Multi-band Spectral-Semantic Hypergraph RAG"
+description = "Dual-mode query-adaptive spectral-semantic Graph and Hypergraph RAG"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = {text = "Apache-2.0"}
@@ -39,6 +39,12 @@ evaluation = [
   "datasets>=3,<5",
   "faiss-cpu>=1.8,<2; platform_machine != 'arm64'",
 ]
+lora = [
+  "transformers>=4.48,<5",
+  "peft>=0.14,<1",
+  "accelerate>=1.2,<2",
+  "sentencepiece>=0.2,<1",
+]
 dev = [
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.24,<1",
@@ -59,4 +65,3 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-

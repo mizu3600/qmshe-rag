@@ -1,7 +1,9 @@
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
+import networkx as nx
 import torch
 
 from qmshe.embedding.chebyshev import scipy_to_torch_sparse
@@ -59,6 +61,7 @@ class QMSHEPipeline:
         self.version = ArtifactVersion.create()
         self.query_cache = VersionedQueryCache(max_items=1024)
         self.metrics = RuntimeMetrics()
+        self.use_role_aware_query = True
         self._build()
 
     def _build(self) -> None:
@@ -118,15 +121,47 @@ class QMSHEPipeline:
     def train_stage_a(
         self, training_pairs: list[tuple[str, set[str]]], epochs: int = 10,
         learning_rate: float = 2e-4, gradient_clip: float = 1.0,
+        bridge_by_question: dict[str, set[str]] | None = None,
+        bridge_loss_weight: float = 0.5, use_hard_negatives: bool = True,
+        use_role_aware: bool = True,
     ) -> list[float]:
         if not training_pairs:
             raise ValueError("training pairs are empty")
         object_index = {object_id: index for index, object_id in enumerate(self.object_ids)}
         prepared = []
+        bridge_by_question = bridge_by_question or {}
+        generator = random.Random(42)
         for question, positive_ids in training_pairs:
             indices = [object_index[item] for item in positive_ids if item in object_index]
             if indices:
-                prepared.append((torch.tensor(self.text_encoder.encode([question])[0], dtype=torch.float32), indices))
+                query = torch.tensor(self.text_encoder.encode([question])[0], dtype=torch.float32)
+                excluded = set(indices)
+                semantic_order = torch.argsort(self.raw_features @ query, descending=True).tolist()
+                semantic = [index for index in semantic_order if index not in excluded][:4]
+                structural_ids = set()
+                for positive_id in positive_ids:
+                    if positive_id in self.evidence_graph:
+                        structural_ids.update(
+                            nx.single_source_shortest_path_length(
+                                self.evidence_graph, positive_id, cutoff=2
+                            )
+                        )
+                structural = [
+                    object_index[item] for item in structural_ids
+                    if item in object_index and object_index[item] not in excluded
+                ][:4]
+                negative_pool = [index for index in range(len(self.object_ids)) if index not in excluded]
+                if use_hard_negatives:
+                    selected = list(dict.fromkeys([*semantic, *structural]))
+                    remaining = [index for index in negative_pool if index not in selected]
+                    selected.extend(generator.sample(remaining, min(8, len(remaining))))
+                else:
+                    selected = generator.sample(negative_pool, min(16, len(negative_pool)))
+                bridge_indices = [
+                    object_index[item] for item in bridge_by_question.get(question, set())
+                    if item in object_index
+                ]
+                prepared.append((query, indices, selected, bridge_indices))
         if not prepared:
             raise ValueError("no training positives exist in the index")
         optimizer = torch.optim.AdamW(
@@ -137,22 +172,25 @@ class QMSHEPipeline:
         self.relation_gate.train()
         for _ in range(epochs):
             total = 0.0
-            for query_tensor, positive_indices in prepared:
+            for query_tensor, positive_indices, negative_indices, bridge_indices in prepared:
                 optimizer.zero_grad(set_to_none=True)
                 bands = self.model.encode_nodes(self.raw_features, self.laplacian)
-                relation_weights = self.relation_gate(query_tensor)
-                role_bands = {
-                    role: self.model.encode_nodes(self.raw_features, laplacian)
-                    for role, laplacian in self.role_laplacians.items()
-                }
-                conditioned = {"raw": bands["raw"]}
-                for band_name in ("low", "mid", "high"):
-                    stacked = torch.stack(
-                        [role_bands[role][band_name] for role in self.role_names], dim=0
-                    )
-                    conditioned[band_name] = torch.einsum(
-                        "r,rnd->nd", relation_weights, stacked
-                    )
+                if use_role_aware:
+                    relation_weights = self.relation_gate(query_tensor)
+                    role_bands = {
+                        role: self.model.encode_nodes(self.raw_features, laplacian)
+                        for role, laplacian in self.role_laplacians.items()
+                    }
+                    conditioned = {"raw": bands["raw"]}
+                    for band_name in ("low", "mid", "high"):
+                        stacked = torch.stack(
+                            [role_bands[role][band_name] for role in self.role_names], dim=0
+                        )
+                        conditioned[band_name] = torch.einsum(
+                            "r,rnd->nd", relation_weights, stacked
+                        )
+                else:
+                    conditioned = bands
                 query_vector, _ = self.model.encode_query(
                     query_tensor, self.raw_features, conditioned, top_m=64, temperature=0.05
                 )
@@ -161,15 +199,29 @@ class QMSHEPipeline:
                     dim=-1,
                 )
                 scores = conditioned_full @ query_vector
-                positives = scores[torch.tensor(positive_indices)]
-                loss = torch.logsumexp(scores, dim=0) - torch.logsumexp(positives, dim=0)
+                positive_tensor = torch.tensor(positive_indices)
+                positives = scores[positive_tensor]
+                candidate_indices = torch.tensor([*positive_indices, *negative_indices])
+                candidate_scores = scores[candidate_indices]
+                loss = torch.logsumexp(candidate_scores, dim=0) - torch.logsumexp(positives, dim=0)
+                if negative_indices:
+                    negatives = scores[torch.tensor(negative_indices)]
+                    loss = loss + 0.2 * torch.relu(0.2 - positives.max() + negatives.max())
+                if bridge_indices and bridge_loss_weight > 0:
+                    bridges = scores[torch.tensor(bridge_indices)]
+                    loss = loss + bridge_loss_weight * (
+                        torch.logsumexp(scores, dim=0) - torch.logsumexp(bridges, dim=0)
+                    )
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), gradient_clip)
+                torch.nn.utils.clip_grad_norm_(
+                    [*self.model.parameters(), *self.relation_gate.parameters()], gradient_clip
+                )
                 optimizer.step()
                 total += float(loss.detach())
             history.append(total / len(prepared))
         self.model.eval()
         self.relation_gate.eval()
+        self.use_role_aware_query = use_role_aware
         with torch.no_grad():
             self.node_bands = self.model.encode_nodes(self.raw_features, self.laplacian)
             self.role_node_bands = {
@@ -239,6 +291,8 @@ class QMSHEPipeline:
     def _relation_conditioned_bands(self, query_tensor: torch.Tensor):
         if not self.role_names:
             return torch.ones(1), self.node_bands
+        if not self.use_role_aware_query:
+            return torch.full((len(self.role_names),), 1.0 / len(self.role_names)), self.node_bands
         with torch.no_grad():
             weights = self.relation_gate(query_tensor)
         combined = {"raw": self.node_bands["raw"]}

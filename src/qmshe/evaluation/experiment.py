@@ -77,7 +77,16 @@ class BenchmarkExperimentRunner:
         )
         summary = summarize_records(records)
         (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-        (output_dir / "report.md").write_text(render_report(suite, summary), encoding="utf-8")
+        grouped = {
+            "hop_count": summarize_records_by(records, "hop_count"),
+            "query_type": summarize_records_by(records, "query_type"),
+        }
+        (output_dir / "grouped_summary.json").write_text(
+            json.dumps(grouped, indent=2), encoding="utf-8"
+        )
+        (output_dir / "report.md").write_text(
+            render_report(suite, summary, grouped), encoding="utf-8"
+        )
         if self.track_mlflow:
             _log_mlflow(suite, summary, output_dir)
         return records
@@ -177,7 +186,17 @@ def summarize_records(records: list[ExperimentRecord]) -> dict:
     }
 
 
-def render_report(suite: BenchmarkSuite, summary: dict) -> str:
+def summarize_records_by(records: list[ExperimentRecord], field: str) -> dict:
+    grouped = defaultdict(list)
+    for record in records:
+        grouped[str(getattr(record, field))].append(record)
+    return {
+        group: summarize_records(items)
+        for group, items in grouped.items()
+    }
+
+
+def render_report(suite: BenchmarkSuite, summary: dict, grouped: dict | None = None) -> str:
     lines = [f"# {suite.name} experiment", "", f"Examples: {len(suite.examples)}", "",
              "| Method | Recall@10 | Recall@20 | MRR | nDCG@10 | Bridge@20 | Latency ms |",
              "|---|---:|---:|---:|---:|---:|---:|"]
@@ -187,6 +206,20 @@ def render_report(suite: BenchmarkSuite, summary: dict) -> str:
             f"{metrics['mrr']:.4f} | {metrics['ndcg_at_10']:.4f} | "
             f"{metrics['bridge_recall_at_20']:.4f} | {metrics['latency_ms']:.2f} |"
         )
+    for field, groups in (grouped or {}).items():
+        lines.extend(["", f"## By {field.replace('_', ' ')}", ""])
+        for group, methods in groups.items():
+            lines.extend([
+                f"### {group}", "",
+                "| Method | Recall@20 | MRR | Bridge@20 |",
+                "|---|---:|---:|---:|",
+            ])
+            for method, metrics in methods.items():
+                lines.append(
+                    f"| {method} | {metrics['recall_at_20']:.4f} | "
+                    f"{metrics['mrr']:.4f} | {metrics['bridge_recall_at_20']:.4f} |"
+                )
+            lines.append("")
     return "\n".join(lines) + "\n"
 
 

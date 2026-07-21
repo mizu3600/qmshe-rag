@@ -20,7 +20,9 @@ def main(
     built = build_suite_corpus(suite.examples)
     pipeline = QMSHEPipeline(built.corpus, text_encoder=LocalBenchmarkEncoder())
     pipeline.generator.client = None
-    history = pipeline.train_stage_a(built.training_pairs, epochs=epochs)
+    history = pipeline.train_stage_a(
+        built.training_pairs, epochs=epochs, bridge_by_question=built.bridge_by_question
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
         "model": pipeline.model.state_dict(), "relation_gate": pipeline.relation_gate.state_dict(),

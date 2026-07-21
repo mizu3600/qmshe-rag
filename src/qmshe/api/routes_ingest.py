@@ -1,15 +1,17 @@
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from qmshe.api.dependencies import set_pipeline
+from qmshe.api.dependencies import set_graph_pipeline, set_pipeline
 from qmshe.extraction.canonicalizer import canonicalize_entities
 from qmshe.extraction.entity_extractor import extract_entities_rule_based
 from qmshe.extraction.fact_extractor import extract_facts_rule_based, extract_facts_with_llm
 from qmshe.ingest.chunker import chunk_document
-from qmshe.ingest.pdf_parser import parse_document
 from qmshe.ingest.schemas import Corpus
+from qmshe.graph.ordinary import GraphProfile
+from qmshe.graph_pipeline import QMSGEGraphPipeline
 from qmshe.pipeline import QMSHEPipeline, load_corpus, save_corpus
 from qmshe.providers import DeepSeekClient, ProviderError
 
@@ -28,14 +30,21 @@ class BuildRequest(BaseModel):
     build_evidence_graph: bool = True
     build_semantic_graph: bool = True
     build_spectral_embeddings: bool = True
+    mode: Literal["hypergraph", "graph", "both"] = "hypergraph"
+    graph_profile: GraphProfile = GraphProfile.REIFIED_FACT
+    graph_index_strategy: Literal["single", "multi", "hybrid"] = "hybrid"
 
 
 class IncrementalRequest(BaseModel):
     corpus_path: str
+    mode: Literal["hypergraph", "graph"] = "hypergraph"
+    graph_profile: GraphProfile = GraphProfile.REIFIED_FACT
 
 
 @router.post("/documents/ingest")
 def ingest(request: IngestRequest) -> dict:
+    from qmshe.ingest.pdf_parser import parse_document
+
     path = Path(request.source_uri)
     if not path.exists():
         raise HTTPException(status_code=404, detail="source file not found")
@@ -57,15 +66,26 @@ def ingest(request: IngestRequest) -> dict:
 def build_index(request: BuildRequest) -> dict:
     _ = (request.build_evidence_graph, request.build_semantic_graph, request.build_spectral_embeddings)
     corpus = load_corpus(request.corpus_path)
-    set_pipeline(QMSHEPipeline(corpus))
+    built = []
+    if request.mode in {"hypergraph", "both"}:
+        set_pipeline(QMSHEPipeline(corpus))
+        built.append("hypergraph")
+    if request.mode in {"graph", "both"}:
+        set_graph_pipeline(QMSGEGraphPipeline(
+            corpus, profile=request.graph_profile, index_strategy=request.graph_index_strategy
+        ))
+        built.append(f"graph:{request.graph_profile.value}")
     return {"status": "ready", "corpus_version": request.corpus_version,
-            "entities": len(corpus.entities), "hyperedges": len(corpus.evidence_hyperedges)}
+            "modes": built, "entities": len(corpus.entities),
+            "hyperedges": len(corpus.evidence_hyperedges)}
 
 
 @router.post("/index/incremental")
 def incremental_index(request: IncrementalRequest) -> dict:
-    from qmshe.api.dependencies import get_pipeline
+    from qmshe.api.dependencies import get_graph_pipeline, get_pipeline
 
-    pipeline = get_pipeline()
     updated = load_corpus(request.corpus_path)
+    if request.mode == "graph":
+        return get_graph_pipeline(request.graph_profile).incremental_update(updated)
+    pipeline = get_pipeline()
     return pipeline.incremental_update(updated)

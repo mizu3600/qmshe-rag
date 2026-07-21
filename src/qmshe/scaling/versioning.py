@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -16,7 +16,7 @@ class ArtifactVersion(BaseModel):
         return cls(
             graph_version=f"graph-v{graph}", encoder_version=f"text-v{encoder}",
             spectral_version=f"spec-v{spectral}", index_version=f"index-v{index}",
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
 
     def compatible_with(self, other: "ArtifactVersion") -> bool:

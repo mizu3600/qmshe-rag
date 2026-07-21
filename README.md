@@ -1,6 +1,7 @@
-# QMSHE-RAG
+# QMSxE-RAG
 
-查询自适应多频带谱—语义超图检索增强生成系统。项目已覆盖设计文档的 Phase 0–5：
+查询自适应多频带谱—语义普通图/超图双模式检索增强生成系统。原 QMSHE 超图链路保持默认，
+新增独立的 QMSGE 普通图链路，并支持 Entity-Relation 与 Reified-Fact 两种 profile。项目已覆盖：
 文档摄取、实体与 n 元事实抽取、证据/语义超图、Zhou Laplacian、Chebyshev 多频带滤波、
 查询门控、混合检索、证据约束、引用生成、FastAPI、baseline 与自动化测试。
 
@@ -40,11 +41,13 @@ uv run python scripts/verify_infrastructure.py
 uv run qmshe ingest data/raw/paper.pdf
 uv run qmshe build data/processed/corpus.json
 uv run qmshe query "How does PEAI improve Voc?"
+uv run qmshe query "How does PEAI improve Voc?" --mode graph --graph-profile reified_fact
 uv run qmshe demo
 uv run qmshe evaluate
 ```
 
 更完整的架构、数据格式、实验与验收说明见 `docs/IMPLEMENTATION.md`。
+普通图/超图的隔离边界、API、训练和公平对比见 `docs/DUAL_MODE.md`。
 
 ## Phase 3–5
 
@@ -65,6 +68,19 @@ uv run python scripts/build_psc_corpus.py /path/to/psc/papers \
 # 消融和压力测试
 uv run python scripts/run_ablations.py
 uv run python scripts/run_load_test.py --requests 100 --concurrency 8
+
+# 普通图 Stage A 与双模式公平对比
+uv run python scripts/train_graph_mode.py --profile reified_fact --limit 5 --epochs 10
+uv run python scripts/run_dual_mode_experiment.py --limit 5
+
+# BGE-M3 query-only LoRA（需要本地模型与 lora extra）
+uv sync --extra lora
+uv run python scripts/train_query_lora.py \
+  --base-model /path/to/bge-m3 --limit 500 --epochs 3 --learning-rate 0.00002
+
+# 一条命令生成数学、baseline、分组、消融、效率、门控和案例报告
+uv run python scripts/reproduce_delivery.py --limit 5
 ```
 
 Phase 3–5 的实现、真实小样本结果和限制见 `docs/PHASES_3_5.md`。
+远程部署与 LoRA 实测结果见 `docs/REMOTE_DEPLOYMENT.md`。

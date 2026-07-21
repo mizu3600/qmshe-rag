@@ -7,7 +7,6 @@ from qmshe.extraction.canonicalizer import canonicalize_entities
 from qmshe.extraction.entity_extractor import extract_entities_rule_based
 from qmshe.extraction.fact_extractor import extract_facts_rule_based, extract_facts_with_llm
 from qmshe.ingest.chunker import chunk_document
-from qmshe.ingest.pdf_parser import parse_document
 from qmshe.ingest.schemas import Corpus
 from qmshe.providers import DeepSeekClient, ProviderError
 
@@ -105,6 +104,8 @@ def detect_qualifier_conflicts(facts) -> list[tuple[str, str, str]]:
 
 
 def build_psc_corpus(directory: str | Path, use_llm: bool = True) -> Corpus:
+    from qmshe.ingest.pdf_parser import parse_document
+
     directory = Path(directory)
     documents, chunks = [], []
     for path in sorted(directory.iterdir()):
