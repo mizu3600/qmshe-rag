@@ -17,6 +17,7 @@ def test_both_ordinary_graph_profiles_return_traceable_facts():
         pipeline = QMSGEGraphPipeline(
             make_synthetic_corpus(), text_encoder=LocalEncoder(), profile=profile
         )
+        assert pipeline.use_graph_rerank is False
         result = pipeline.query("How does PEAI improve Voc?", top_k=4)
         assert result.mode == "graph"
         assert result.profile == profile.value

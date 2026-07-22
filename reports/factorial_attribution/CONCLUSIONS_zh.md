@@ -102,5 +102,5 @@ LoRA 不是最大召回来源，但对前排排序、路径质量有稳定增益
 4. LoRA 有稳定但次级的增量，主要改善 MRR 和 Path F1；
 5. 多频带 Spectral 只在 Reified-Fact 上得到小而显著的 Recall 增益，在
    Entity-Relation 和 Hypergraph 上未被证明有效；
-6. 当前 Graph Rerank 应考虑关闭或重做，因为它在 Reified-Fact 与 Hypergraph
-   上显著有害，在 Entity-Relation 上也没有收益。
+6. 当前 Graph Rerank 已在普通图和超图生产链路中默认关闭；旧实现仅保留为显式
+   opt-in，供后续重做和复现实验使用。

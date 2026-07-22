@@ -58,7 +58,7 @@ class QMSGEGraphPipeline:
         reranker=None,
         seed: int = 42,
         enable_remote_reranker: bool = True,
-        use_graph_rerank: bool = True,
+        use_graph_rerank: bool = False,
         use_bm25: bool = True,
         dense_only: bool = False,
     ):

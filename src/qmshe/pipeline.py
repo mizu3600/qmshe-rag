@@ -62,7 +62,7 @@ class QMSHEPipeline:
         enable_remote_reranker: bool = True,
         semantic_weight: float = 0.25,
         role_semantic_weight: float = 0.10,
-        use_graph_rerank: bool = True,
+        use_graph_rerank: bool = False,
         use_bm25: bool = True,
         dense_only: bool = False,
     ):
