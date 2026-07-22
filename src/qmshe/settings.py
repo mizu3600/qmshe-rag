@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://qmshe:qmshe-local-only@localhost:55432/qmshe"
     mlflow_tracking_uri: str = "http://localhost:5001"
     request_timeout: float = 60.0
+    qmshe_enable_hypergraph: bool = False
+    qmshe_enable_entity_relation: bool = False
+    qmshe_enable_reified_fact: bool = True
 
 
 @lru_cache

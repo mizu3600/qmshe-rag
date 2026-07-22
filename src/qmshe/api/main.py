@@ -14,7 +14,12 @@ app.include_router(evaluate_router)
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "version": __version__}
+    return {
+        "status": "ok",
+        "version": __version__,
+        "active_mode": "graph",
+        "active_profile": "reified_fact",
+    }
 
 
 @app.exception_handler(RuntimeError)

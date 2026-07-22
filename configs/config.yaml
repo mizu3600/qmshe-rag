@@ -2,10 +2,11 @@ project:
   name: qmshe-rag
   seed: 42
 mode:
-  default: hypergraph
-  enabled: [hypergraph, graph]
+  default: graph
+  enabled: [graph]
 ordinary_graph:
   profile: reified_fact
+  enabled_profiles: [reified_fact]
   profiles: [entity_relation, reified_fact]
   index_strategy: hybrid
   index_strategies: [single, multi, hybrid]
@@ -33,6 +34,7 @@ projection:
   raw_dim: 256
   band_dim: 128
 hypergraph:
+  enabled: false
   use_role_aware: false
   min_edge_size: 2
   max_edge_size: 12

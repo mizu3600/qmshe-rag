@@ -4,7 +4,11 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from qmshe.api.dependencies import set_graph_pipeline, set_pipeline
+from qmshe.api.dependencies import (
+    ensure_runtime_mode_enabled,
+    set_graph_pipeline,
+    set_pipeline,
+)
 from qmshe.extraction.canonicalizer import canonicalize_entities
 from qmshe.extraction.entity_extractor import extract_entities_rule_based
 from qmshe.extraction.fact_extractor import extract_facts_rule_based, extract_facts_with_llm
@@ -30,14 +34,14 @@ class BuildRequest(BaseModel):
     build_evidence_graph: bool = True
     build_semantic_graph: bool = True
     build_spectral_embeddings: bool = True
-    mode: Literal["hypergraph", "graph", "both"] = "hypergraph"
+    mode: Literal["hypergraph", "graph", "both"] = "graph"
     graph_profile: GraphProfile = GraphProfile.REIFIED_FACT
     graph_index_strategy: Literal["single", "multi", "hybrid"] = "hybrid"
 
 
 class IncrementalRequest(BaseModel):
     corpus_path: str
-    mode: Literal["hypergraph", "graph"] = "hypergraph"
+    mode: Literal["hypergraph", "graph"] = "graph"
     graph_profile: GraphProfile = GraphProfile.REIFIED_FACT
 
 
@@ -68,9 +72,11 @@ def build_index(request: BuildRequest) -> dict:
     corpus = load_corpus(request.corpus_path)
     built = []
     if request.mode in {"hypergraph", "both"}:
+        ensure_runtime_mode_enabled("hypergraph")
         set_pipeline(QMSHEPipeline(corpus))
         built.append("hypergraph")
     if request.mode in {"graph", "both"}:
+        ensure_runtime_mode_enabled("graph", request.graph_profile)
         set_graph_pipeline(QMSGEGraphPipeline(
             corpus, profile=request.graph_profile, index_strategy=request.graph_index_strategy
         ))

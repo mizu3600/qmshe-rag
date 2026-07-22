@@ -24,6 +24,10 @@ still require full datasets, valid API credentials, domain papers and expert gol
 14. PSC ontology, measurement normalization, quality audit and provenance-validated annotation store.
 15. Incremental approximate indexing, version compatibility, partition/coarse graph, cache and load test.
 
+The production API and CLI default to `graph:reified_fact`. Hypergraph and Entity-Relation remain
+available to training/evaluation code but are runtime-disabled unless their explicit environment
+opt-ins are set.
+
 ## Evidence boundary
 
 `EvidenceHyperedge` always names one or more source chunks. `SemanticHyperedge` has the

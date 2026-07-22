@@ -1,8 +1,9 @@
 # QMSxE-RAG dual graph modes
 
-The repository now contains two independent spectral retrieval branches over one source corpus.
-The existing QMSHE hypergraph path remains the default and is unchanged. The QMSGE ordinary-graph
-path must be selected explicitly with `mode=graph`.
+The repository contains two independent spectral retrieval branches over one source corpus. The
+production runtime now exposes only QMSGE ordinary graph with the `reified_fact` profile by
+default. QMSHE Hypergraph and the Entity-Relation profile remain intact for research and historical
+reproduction, but require explicit environment-variable opt-in.
 
 ## Module boundary
 
@@ -36,12 +37,12 @@ graph-constrained reranking.
 
 ## API
 
-Build one profile while preserving the existing hypergraph index:
+Build the production-default Reified-Fact profile:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/index/build \
   -H 'content-type: application/json' \
-  -d '{"corpus_path":"data/processed/corpus.json","mode":"both","graph_profile":"reified_fact","graph_index_strategy":"hybrid"}'
+  -d '{"corpus_path":"data/processed/corpus.json","mode":"graph","graph_profile":"reified_fact","graph_index_strategy":"hybrid"}'
 ```
 
 Query the ordinary graph explicitly:
@@ -52,9 +53,10 @@ curl -X POST http://127.0.0.1:8000/v1/query \
   -d '{"question":"...","mode":"graph","graph_profile":"reified_fact","return_debug":true}'
 ```
 
-Omitting `mode` continues to query the original hypergraph branch. Build the other profile by
-calling `/v1/index/build` again with `graph_profile=entity_relation`; both profiles remain available
-in the process registry.
+Omitting `mode` queries `graph:reified_fact`. Requests for Hypergraph or Entity-Relation return 409
+while disabled. To reproduce historical experiments without changing source code, set
+`QMSHE_ENABLE_HYPERGRAPH=true` or `QMSHE_ENABLE_ENTITY_RELATION=true` before starting the process.
+The pipelines may still coexist in the process registry after opt-in.
 
 ## Training and fair comparison
 
@@ -83,5 +85,6 @@ For small updates, only new/changed nodes and their two-hop neighborhood receive
 bands; unchanged existing vectors are retained. Growth of at least 3% of nodes or 5% of edges
 requests a full graph rebuild. Every update invalidates the profile-specific query cache.
 
-Hybrid routing is intentionally not enabled. `mode=hypergraph` and `mode=graph` are explicit so
-their effectiveness can be compared without an untrained router confounding the result.
+Hybrid routing is intentionally not enabled. Production has one active route,
+`graph:reified_fact`; comparison scripts instantiate the preserved branches directly and therefore
+do not depend on runtime enablement flags.

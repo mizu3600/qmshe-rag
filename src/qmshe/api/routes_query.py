@@ -13,7 +13,7 @@ class QueryRequest(BaseModel):
     question: str = Field(min_length=1)
     top_k: int = Field(default=12, ge=1, le=100)
     return_debug: bool = False
-    mode: Literal["hypergraph", "graph"] = "hypergraph"
+    mode: Literal["hypergraph", "graph"] = "graph"
     graph_profile: GraphProfile = GraphProfile.REIFIED_FACT
 
 
@@ -28,7 +28,7 @@ def query(request: QueryRequest) -> dict:
 
 @router.get("/metrics")
 def metrics(
-    mode: Literal["hypergraph", "graph"] = "hypergraph",
+    mode: Literal["hypergraph", "graph"] = "graph",
     graph_profile: GraphProfile = GraphProfile.REIFIED_FACT,
 ) -> dict:
     if mode == "graph":

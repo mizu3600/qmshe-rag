@@ -1,7 +1,8 @@
 # QMSxE-RAG
 
-查询自适应多频带谱—语义普通图/超图双模式检索增强生成系统。原 QMSHE 超图链路保持默认，
-新增独立的 QMSGE 普通图链路，并支持 Entity-Relation 与 Reified-Fact 两种 profile。项目已覆盖：
+查询自适应多频带谱—语义普通图/超图检索增强生成系统。生产默认只启用
+QMSGE Reified-Fact；QMSHE Hypergraph 与 Entity-Relation 的实现、模型和实验入口
+完整保留，但运行时默认关闭，可通过环境变量显式恢复。项目已覆盖：
 文档摄取、实体与 n 元事实抽取、证据/语义超图、Zhou Laplacian、Chebyshev 多频带滤波、
 查询门控、混合检索、证据约束、引用生成、FastAPI、baseline 与自动化测试。
 
@@ -48,6 +49,10 @@ uv run qmshe evaluate
 
 更完整的架构、数据格式、实验与验收说明见 `docs/IMPLEMENTATION.md`。
 普通图/超图的隔离边界、API、训练和公平对比见 `docs/DUAL_MODE.md`。
+
+默认 API/CLI 路由为 `mode=graph, graph_profile=reified_fact`。如需复现实验，可在
+`.env` 中设置 `QMSHE_ENABLE_HYPERGRAPH=true` 或
+`QMSHE_ENABLE_ENTITY_RELATION=true`；这不会删除或重建对应代码和模型。
 
 ## Phase 3–5
 
