@@ -99,3 +99,33 @@ PYTHONPATH=src python scripts/evaluate_stage_a_training_effect.py \
   --output-dir reports/stage_a_training_effect \
   --limit 500 --seeds 13,42,73
 ```
+
+## Exact factorial attribution
+
+One-at-a-time deletion does not separate source effects from interactions. The
+factorial track keeps raw dense retrieval as the common reference and evaluates
+every subset of these binary factors:
+
+- ordinary graph: Entity→Fact expansion, BM25, spectral retrieval, structural
+  graph reranking and the base neural reranker (`2^5` cells);
+- hypergraph: BM25, spectral retrieval, structural graph reranking and the base
+  neural reranker (`2^4` cells).
+
+Every non-reranker context is additionally evaluated with the LoRA reranker, so
+the adapter is measured as a conditional increment over the base cross-encoder.
+The report uses exact Shapley values for main attribution and mean second
+differences for pair interactions. BM25 and spectral source Shapley values plus
+their interaction quantify multi-source fusion without inventing an arbitrary
+"fusion off" concatenation order. All configurations have the same 60-Fact
+candidate cap and 40-Fact output cap.
+
+```bash
+PYTHONPATH=src python scripts/run_factorial_attribution.py \
+  --embedding-model /models/bge-m3 \
+  --reranker-model /models/bge-reranker-v2-m3 \
+  --reranker-adapters \
+  '13=data/models/bge_reranker_lora_seed_13,42=data/models/bge_reranker_lora_seed_42,73=data/models/bge_reranker_lora_seed_73' \
+  --checkpoint-root data/models/stage_ab \
+  --output-dir reports/factorial_attribution \
+  --limit 500 --seeds 13,42,73
+```
