@@ -18,6 +18,8 @@ data/graph/*
 !data/graph/.gitkeep
 data/models/
 data/index/
+data/benchmarks/hotpot_dev_distractor_v1.json
+data/benchmarks/hotpot_train_v1.1.json
 mlruns/
 third_party/official_baselines/
 third_party/.venvs/
@@ -25,3 +27,5 @@ PathRAG.log
 hypergraphrag.log
 reports/official_baselines_hotpot2000/logs/
 reports/official_baselines_hotpot2000/partial/
+reports/benchmark_v2/records.json
+reports/benchmark_v2_trained/records.json
