@@ -36,3 +36,4 @@ reports/unified_native_benchmark/traces.json
 reports/unified_native_benchmark_queue_wait_backup/
 reports/core_ablation_matrix/records.json
 reports/runtime_ablation_matrix/records.json
+reports/stage_a_training_effect/records.json

@@ -75,3 +75,27 @@ PYTHONPATH=src python scripts/run_runtime_ablation_matrix.py \
 The reports must not merge the intrinsic and end-to-end tracks into one table:
 they answer different questions. Runtime flags default to the original Full
 pipeline, so the production behavior is unchanged.
+
+## Stage A training-effect 2×2 control
+
+The component ablations above do not constitute an untrained control because
+`raw_only` is itself independently trained. The separate 2×2 experiment holds
+the architecture and within-seed initialization fixed and compares:
+
+- `trained_raw` versus `untrained_raw` for semantic alignment training;
+- `trained_full` versus `untrained_full` for total Stage A training;
+- `trained_full` versus `trained_raw` for the trained spectral-band increment;
+- `untrained_full` versus `untrained_raw` as an initialization sanity check.
+
+It also reports `dense_bge_identity`, which is not a 2×2 cell: it is the
+practical no-Stage-A reference using cosine similarity in the original BGE-M3
+space instead of an untrained random projection.
+
+```bash
+PYTHONPATH=src python scripts/evaluate_stage_a_training_effect.py \
+  --base-model /models/bge-m3 \
+  --raw-checkpoint-root data/models/core_ablation \
+  --full-checkpoint-root data/models/stage_ab \
+  --output-dir reports/stage_a_training_effect \
+  --limit 500 --seeds 13,42,73
+```
