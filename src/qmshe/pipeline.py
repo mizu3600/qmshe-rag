@@ -33,7 +33,9 @@ def verbalize_fact(fact: EvidenceHyperedge, entity_names: dict[str, str]) -> str
         f"{argument.role}={entity_names.get(argument.entity_id, argument.entity_id)}"
         for argument in fact.arguments
     )
-    qualifiers = ", ".join(f"{key}={value}" for key, value in fact.qualifiers.items() if value is not None)
+    qualifiers = ", ".join(
+        f"{key}={value}" for key, value in fact.qualifiers.items() if value is not None
+    )
     return f"{fact.predicate}: {arguments}" + (f"; {qualifiers}" if qualifiers else "")
 
 
@@ -52,8 +54,17 @@ class QueryResult:
 
 class QMSHEPipeline:
     def __init__(
-        self, corpus: Corpus, text_encoder: TextEncoder | None = None,
-        reranker=None, seed: int = 42, enable_remote_reranker: bool = True,
+        self,
+        corpus: Corpus,
+        text_encoder: TextEncoder | None = None,
+        reranker=None,
+        seed: int = 42,
+        enable_remote_reranker: bool = True,
+        semantic_weight: float = 0.25,
+        role_semantic_weight: float = 0.10,
+        use_graph_rerank: bool = True,
+        use_bm25: bool = True,
+        dense_only: bool = False,
     ):
         if not corpus.entities or not corpus.evidence_hyperedges:
             raise ValueError("corpus must contain entities and evidence hyperedges")
@@ -62,6 +73,11 @@ class QMSHEPipeline:
         self.reranker = reranker
         self.seed = seed
         self.enable_remote_reranker = enable_remote_reranker
+        self.semantic_weight = semantic_weight
+        self.role_semantic_weight = role_semantic_weight
+        self.use_graph_rerank = use_graph_rerank
+        self.use_bm25 = use_bm25
+        self.dense_only = dense_only
         self.generator = EvidenceGenerator()
         self.evidence_graph = build_evidence_graph(corpus)
         self.version = ArtifactVersion.create()
@@ -72,7 +88,9 @@ class QMSHEPipeline:
 
     def _build(self) -> None:
         names = {entity.entity_id: entity.canonical_name for entity in self.corpus.entities}
-        entity_texts = [f"{entity.canonical_name}. {entity.description}" for entity in self.corpus.entities]
+        entity_texts = [
+            f"{entity.canonical_name}. {entity.description}" for entity in self.corpus.entities
+        ]
         fact_texts = [verbalize_fact(fact, names) for fact in self.corpus.evidence_hyperedges]
         self.object_ids = [entity.entity_id for entity in self.corpus.entities] + [
             fact.hyperedge_id for fact in self.corpus.evidence_hyperedges
@@ -87,20 +105,24 @@ class QMSHEPipeline:
             self.corpus.semantic_hyperedges = [
                 SemanticHyperedge(
                     semantic_edge_id=f"sem_{left}_{right}",
-                    member_ids=[self.corpus.evidence_hyperedges[left].hyperedge_id,
-                                self.corpus.evidence_hyperedges[right].hyperedge_id],
+                    member_ids=[
+                        self.corpus.evidence_hyperedges[left].hyperedge_id,
+                        self.corpus.evidence_hyperedges[right].hyperedge_id,
+                    ],
                     topic="embedding_similarity",
                     confidence=score,
                 )
                 for (left, right), score in semantic.similarities.items()
             ]
         self.laplacian_scipy = build_joint_spectral_laplacian(
-            incidence.matrix, semantic.adjacency, semantic_weight=0.25
+            incidence.matrix, semantic.adjacency, semantic_weight=self.semantic_weight
         )
         laplacian = scipy_to_torch_sparse(self.laplacian_scipy)
         self.laplacian = laplacian
         torch.manual_seed(self.seed)
-        self.model = JointSpectralSemanticEncoder(features.shape[1], raw_dim=64, band_dim=32, order=5)
+        self.model = JointSpectralSemanticEncoder(
+            features.shape[1], raw_dim=64, band_dim=32, order=5
+        )
         self.model.eval()
         with torch.no_grad():
             self.node_bands = self.model.encode_nodes(features, laplacian)
@@ -110,7 +132,11 @@ class QMSHEPipeline:
         self.role_laplacians = {}
         for role in self.role_names:
             role_laplacian = scipy_to_torch_sparse(
-                build_joint_spectral_laplacian(role_incidence[role], semantic.adjacency, semantic_weight=0.10)
+                build_joint_spectral_laplacian(
+                    role_incidence[role],
+                    semantic.adjacency,
+                    semantic_weight=self.role_semantic_weight,
+                )
             )
             self.role_laplacians[role] = role_laplacian
             with torch.no_grad():
@@ -125,10 +151,14 @@ class QMSHEPipeline:
         self.text_by_id = dict(zip(self.object_ids, self.object_texts, strict=True))
 
     def train_stage_a(
-        self, training_pairs: list[tuple[str, set[str]]], epochs: int = 10,
-        learning_rate: float = 2e-4, gradient_clip: float = 1.0,
+        self,
+        training_pairs: list[tuple[str, set[str]]],
+        epochs: int = 10,
+        learning_rate: float = 2e-4,
+        gradient_clip: float = 1.0,
         bridge_by_question: dict[str, set[str]] | None = None,
-        bridge_loss_weight: float = 0.5, use_hard_negatives: bool = True,
+        bridge_loss_weight: float = 0.5,
+        use_hard_negatives: bool = True,
         use_role_aware: bool = True,
     ) -> list[float]:
         if not training_pairs:
@@ -140,7 +170,9 @@ class QMSHEPipeline:
         for question, positive_ids in training_pairs:
             indices = [object_index[item] for item in positive_ids if item in object_index]
             if indices:
-                query = torch.tensor(encode_queries(self.text_encoder, [question])[0], dtype=torch.float32)
+                query = torch.tensor(
+                    encode_queries(self.text_encoder, [question])[0], dtype=torch.float32
+                )
                 excluded = set(indices)
                 semantic_order = torch.argsort(self.raw_features @ query, descending=True).tolist()
                 semantic = [index for index in semantic_order if index not in excluded][:4]
@@ -153,10 +185,13 @@ class QMSHEPipeline:
                             )
                         )
                 structural = [
-                    object_index[item] for item in structural_ids
+                    object_index[item]
+                    for item in structural_ids
                     if item in object_index and object_index[item] not in excluded
                 ][:4]
-                negative_pool = [index for index in range(len(self.object_ids)) if index not in excluded]
+                negative_pool = [
+                    index for index in range(len(self.object_ids)) if index not in excluded
+                ]
                 if use_hard_negatives:
                     selected = list(dict.fromkeys([*semantic, *structural]))
                     remaining = [index for index in negative_pool if index not in selected]
@@ -164,7 +199,8 @@ class QMSHEPipeline:
                 else:
                     selected = generator.sample(negative_pool, min(16, len(negative_pool)))
                 bridge_indices = [
-                    object_index[item] for item in bridge_by_question.get(question, set())
+                    object_index[item]
+                    for item in bridge_by_question.get(question, set())
                     if item in object_index
                 ]
                 prepared.append((query, indices, selected, bridge_indices))
@@ -201,7 +237,12 @@ class QMSHEPipeline:
                     query_tensor, self.raw_features, conditioned, top_m=64, temperature=0.05
                 )
                 conditioned_full = torch.cat(
-                    [conditioned["raw"], conditioned["low"], conditioned["mid"], conditioned["high"]],
+                    [
+                        conditioned["raw"],
+                        conditioned["low"],
+                        conditioned["mid"],
+                        conditioned["high"],
+                    ],
                     dim=-1,
                 )
                 scores = conditioned_full @ query_vector
@@ -241,7 +282,8 @@ class QMSHEPipeline:
     def load_stage_a_checkpoint(self, checkpoint: str | Path | dict) -> None:
         payload = (
             torch.load(checkpoint, map_location="cpu", weights_only=True)
-            if isinstance(checkpoint, (str, Path)) else checkpoint
+            if isinstance(checkpoint, (str, Path))
+            else checkpoint
         )
         if payload.get("mode") != "hypergraph":
             raise ValueError("Stage A checkpoint is not a hypergraph checkpoint")
@@ -266,15 +308,24 @@ class QMSHEPipeline:
         self.query_cache.clear()
 
     def query(
-        self, question: str, top_k: int = 12, return_debug: bool = True,
+        self,
+        question: str,
+        top_k: int = 12,
+        return_debug: bool = True,
         candidate_count: int | None = None,
     ) -> QueryResult:
         started = perf_counter()
         cache_key = self.query_cache.key(
-            question, self.version, {
-                "top_k": top_k, "return_debug": return_debug,
+            question,
+            self.version,
+            {
+                "top_k": top_k,
+                "return_debug": return_debug,
                 "candidate_count": candidate_count,
-            }
+                "use_graph_rerank": self.use_graph_rerank,
+                "use_bm25": self.use_bm25,
+                "dense_only": self.dense_only,
+            },
         )
         cached = self.query_cache.get(cache_key)
         if cached is not None:
@@ -291,16 +342,27 @@ class QMSHEPipeline:
         if retrieval_count < top_k:
             raise ValueError("candidate_count must be at least top_k")
         qmshe_hits = self.qmshe_index.search(query_vector.numpy(), retrieval_count, "qmshe")
-        relation_full = torch.cat([
-            self.node_bands["raw"], query_node_bands["low"], query_node_bands["mid"], query_node_bands["high"]
-        ], dim=-1).numpy()
+        relation_full = torch.cat(
+            [
+                self.node_bands["raw"],
+                query_node_bands["low"],
+                query_node_bands["mid"],
+                query_node_bands["high"],
+            ],
+            dim=-1,
+        ).numpy()
         relation_hits = ExactVectorIndex(self.object_ids, relation_full).search(
             query_vector.numpy(), retrieval_count, "relation-aware"
         )
         raw_hits = self.raw_index.search(query_np, retrieval_count, "raw")
         bm25_hits = self.bm25.search(question, retrieval_count)
-        fused = reciprocal_rank_fusion([qmshe_hits, relation_hits, raw_hits, bm25_hits])
-        reranked = graph_rerank(fused[:50], self.evidence_graph)
+        retrieval_lists = [raw_hits] if self.dense_only else [qmshe_hits, relation_hits, raw_hits]
+        if self.use_bm25 and not self.dense_only:
+            retrieval_lists.append(bm25_hits)
+        fused = reciprocal_rank_fusion(retrieval_lists)
+        reranked = (
+            graph_rerank(fused[:50], self.evidence_graph) if self.use_graph_rerank else fused[:50]
+        )
         reranked = self._remote_rerank(question, reranked)
         candidate_ids = [hit.object_id for hit in reranked]
         verification = verify_candidates(candidate_ids, self.corpus)
@@ -317,14 +379,17 @@ class QMSHEPipeline:
             retrieved_hyperedges=fact_ids,
             band_weights={name: float(value) for name, value in zip(gate_names, gate, strict=True)},
             relation_weights={
-                name: float(value) for name, value in zip(self.role_names, relation_weights, strict=True)
+                name: float(value)
+                for name, value in zip(self.role_names, relation_weights, strict=True)
             },
             evidence_path=paths[0] if paths else (fact_ids[:1] or []),
             rejected_candidates=verification.rejected if return_debug else {},
             scores=[
                 {"object_id": hit.object_id, "score": hit.score, "source": hit.source}
                 for hit in reranked[:top_k]
-            ] if return_debug else [],
+            ]
+            if return_debug
+            else [],
         )
         self.query_cache.put(cache_key, result)
         self.metrics.observe(result, (perf_counter() - started) * 1000)
@@ -339,7 +404,9 @@ class QMSHEPipeline:
             weights = self.relation_gate(query_tensor)
         combined = {"raw": self.node_bands["raw"]}
         for band in ("low", "mid", "high"):
-            stacked = torch.stack([self.role_node_bands[role][band] for role in self.role_names], dim=0)
+            stacked = torch.stack(
+                [self.role_node_bands[role][band] for role in self.role_names], dim=0
+            )
             combined[band] = torch.einsum("r,rnd->nd", weights, stacked)
         return weights, combined
 
@@ -351,8 +418,12 @@ class QMSHEPipeline:
             return {**plan.__dict__, "indexed_objects": 0}
         names = {entity.entity_id: entity.canonical_name for entity in updated.entities}
         new_entities = [entity for entity in updated.entities if entity.entity_id in new_entity_set]
-        new_facts = [fact for fact in updated.evidence_hyperedges if fact.hyperedge_id in new_fact_set]
-        new_ids = [entity.entity_id for entity in new_entities] + [fact.hyperedge_id for fact in new_facts]
+        new_facts = [
+            fact for fact in updated.evidence_hyperedges if fact.hyperedge_id in new_fact_set
+        ]
+        new_ids = [entity.entity_id for entity in new_entities] + [
+            fact.hyperedge_id for fact in new_facts
+        ]
         new_texts = [f"{entity.canonical_name}. {entity.description}" for entity in new_entities]
         new_texts.extend(verbalize_fact(fact, names) for fact in new_facts)
         raw_np = encode_documents(self.text_encoder, new_texts)
@@ -371,7 +442,10 @@ class QMSHEPipeline:
             )
             for role in self.role_names:
                 self.role_node_bands[role][band_name] = torch.cat(
-                    [self.role_node_bands[role][band_name], torch.tensor(approximate[:, band_index, :])],
+                    [
+                        self.role_node_bands[role][band_name],
+                        torch.tensor(approximate[:, band_index, :]),
+                    ],
                     dim=0,
                 )
         self.node_bands["raw"] = torch.cat([self.node_bands["raw"], raw_projected], dim=0)
@@ -410,7 +484,8 @@ class QMSHEPipeline:
         raw_end = self.model.raw_projection.out_features
         band = self.model.filter_bank.projections[0].out_features
         slices = {
-            "raw": slice(0, raw_end), "low": slice(raw_end, raw_end + band),
+            "raw": slice(0, raw_end),
+            "low": slice(raw_end, raw_end + band),
             "mid": slice(raw_end + band, raw_end + 2 * band),
             "high": slice(raw_end + 2 * band, raw_end + 3 * band),
         }
@@ -430,7 +505,8 @@ class QMSHEPipeline:
                 query[slices[name]] *= 0.25 / max(float(gate[index]), 1e-8)
         index = ExactVectorIndex(self.object_ids, nodes.numpy())
         return [
-            hit.object_id for hit in index.search(query.numpy(), top_k * 3, variant)
+            hit.object_id
+            for hit in index.search(query.numpy(), top_k * 3, variant)
             if hit.object_id.startswith("fact_")
         ][:top_k]
 
@@ -443,19 +519,25 @@ class QMSHEPipeline:
                 question, [self.text_by_id[hit.object_id] for hit in fact_hits]
             )
             local_order = [fact_hits[index] for index in order]
-            remaining = [hit for hit in hits if hit.object_id not in {x.object_id for x in local_order}]
+            remaining = [
+                hit for hit in hits if hit.object_id not in {x.object_id for x in local_order}
+            ]
             return local_order + remaining
         if not self.enable_remote_reranker:
             return hits
         try:
             client = SiliconFlowClient()
             results = client.rerank(
-                question, [self.text_by_id[hit.object_id] for hit in fact_hits], top_n=len(fact_hits)
+                question,
+                [self.text_by_id[hit.object_id] for hit in fact_hits],
+                top_n=len(fact_hits),
             )
         except ProviderError:
             return hits
         remote_order = [fact_hits[item["index"]] for item in results]
-        remaining = [hit for hit in hits if hit.object_id not in {x.object_id for x in remote_order}]
+        remaining = [
+            hit for hit in hits if hit.object_id not in {x.object_id for x in remote_order}
+        ]
         return remote_order + remaining
 
 

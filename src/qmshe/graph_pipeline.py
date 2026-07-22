@@ -50,10 +50,17 @@ class QMSGEGraphPipeline:
     """
 
     def __init__(
-        self, corpus: Corpus, text_encoder: TextEncoder | None = None,
+        self,
+        corpus: Corpus,
+        text_encoder: TextEncoder | None = None,
         profile: GraphProfile | str = GraphProfile.REIFIED_FACT,
-        index_strategy: str = "hybrid", reranker=None, seed: int = 42,
+        index_strategy: str = "hybrid",
+        reranker=None,
+        seed: int = 42,
         enable_remote_reranker: bool = True,
+        use_graph_rerank: bool = True,
+        use_bm25: bool = True,
+        dense_only: bool = False,
     ):
         if not corpus.entities or not corpus.evidence_hyperedges:
             raise ValueError("corpus must contain entities and evidence facts")
@@ -66,6 +73,9 @@ class QMSGEGraphPipeline:
         self.reranker = reranker
         self.seed = seed
         self.enable_remote_reranker = enable_remote_reranker
+        self.use_graph_rerank = use_graph_rerank
+        self.use_bm25 = use_bm25
+        self.dense_only = dense_only
         self.generator = EvidenceGenerator()
         self.version = ArtifactVersion.create()
         self.query_cache = VersionedQueryCache(max_items=1024)
@@ -103,8 +113,11 @@ class QMSGEGraphPipeline:
         self.bm25 = BM25Retriever(list(self.fact_text_by_id), list(self.fact_text_by_id.values()))
 
     def train_stage_a(
-        self, training_pairs: list[tuple[str, set[str]]], epochs: int = 10,
-        learning_rate: float = 2e-4, gradient_clip: float = 1.0,
+        self,
+        training_pairs: list[tuple[str, set[str]]],
+        epochs: int = 10,
+        learning_rate: float = 2e-4,
+        gradient_clip: float = 1.0,
     ) -> list[float]:
         node_index = {node_id: index for index, node_id in enumerate(self.node_ids)}
         prepared: list[tuple[torch.Tensor, list[int]]] = []
@@ -116,7 +129,9 @@ class QMSGEGraphPipeline:
                         expanded.add(entity_id)
             positive_indices = [node_index[item] for item in expanded if item in node_index]
             if positive_indices:
-                query = torch.tensor(encode_queries(self.text_encoder, [question])[0], dtype=torch.float32)
+                query = torch.tensor(
+                    encode_queries(self.text_encoder, [question])[0], dtype=torch.float32
+                )
                 prepared.append((query, positive_indices))
         if not prepared:
             raise ValueError("no training positives exist in the ordinary graph index")
@@ -148,7 +163,8 @@ class QMSGEGraphPipeline:
     def load_stage_a_checkpoint(self, checkpoint: str | Path | dict) -> None:
         payload = (
             torch.load(checkpoint, map_location="cpu", weights_only=True)
-            if isinstance(checkpoint, (str, Path)) else checkpoint
+            if isinstance(checkpoint, (str, Path))
+            else checkpoint
         )
         if payload.get("mode") != "graph":
             raise ValueError("Stage A checkpoint is not an ordinary-graph checkpoint")
@@ -164,15 +180,26 @@ class QMSGEGraphPipeline:
         self.query_cache.clear()
 
     def query(
-        self, question: str, top_k: int = 12, return_debug: bool = True,
+        self,
+        question: str,
+        top_k: int = 12,
+        return_debug: bool = True,
         candidate_count: int | None = None,
     ) -> GraphQueryResult:
         started = perf_counter()
         cache_key = self.query_cache.key(
-            question, self.version,
+            question,
+            self.version,
             {
-                "mode": "graph", "profile": self.profile.value, "top_k": top_k,
-                "debug": return_debug, "candidate_count": candidate_count,
+                "mode": "graph",
+                "profile": self.profile.value,
+                "index_strategy": self.index_strategy,
+                "top_k": top_k,
+                "debug": return_debug,
+                "candidate_count": candidate_count,
+                "use_graph_rerank": self.use_graph_rerank,
+                "use_bm25": self.use_bm25,
+                "dense_only": self.dense_only,
             },
         )
         cached = self.query_cache.get(cache_key)
@@ -185,10 +212,12 @@ class QMSGEGraphPipeline:
             query_parts, gate = self.model.encode_query_parts(
                 query_tensor, self.raw_features, self.node_bands, top_m=64, temperature=0.05
             )
-            query_vector = torch.cat([
-                gate[index] * query_parts[name]
-                for index, name in enumerate(("raw", "low", "mid", "high"))
-            ])
+            query_vector = torch.cat(
+                [
+                    gate[index] * query_parts[name]
+                    for index, name in enumerate(("raw", "low", "mid", "high"))
+                ]
+            )
         candidate_count = candidate_count or max(30, top_k * 3)
         if candidate_count < top_k:
             raise ValueError("candidate_count must be at least top_k")
@@ -207,8 +236,16 @@ class QMSGEGraphPipeline:
             retrieval_lists.append(_weighted_band_fusion(band_hits, gate, candidate_count))
         raw_hits = self.raw_index.search(query_np, candidate_count, "raw-text")
         lexical_hits = self.bm25.search(question, candidate_count)
-        fused = reciprocal_rank_fusion([*retrieval_lists, raw_hits, lexical_hits])
-        reranked = graph_rerank(fused[:50], self.artifacts.graph)
+        if self.dense_only:
+            retrieval_lists = [raw_hits]
+        else:
+            retrieval_lists.append(raw_hits)
+            if self.use_bm25:
+                retrieval_lists.append(lexical_hits)
+        fused = reciprocal_rank_fusion(retrieval_lists)
+        reranked = (
+            graph_rerank(fused[:50], self.artifacts.graph) if self.use_graph_rerank else fused[:50]
+        )
 
         node_ids = [hit.object_id for hit in reranked if hit.object_id in self.artifacts.graph]
         fact_candidates = self._facts_from_candidates([hit.object_id for hit in reranked])
@@ -234,7 +271,9 @@ class QMSGEGraphPipeline:
             scores=[
                 {"object_id": hit.object_id, "score": hit.score, "source": hit.source}
                 for hit in reranked[:top_k]
-            ] if return_debug else [],
+            ]
+            if return_debug
+            else [],
         )
         self.query_cache.put(cache_key, result)
         self.metrics.observe(result, (perf_counter() - started) * 1000)
@@ -254,9 +293,7 @@ class QMSGEGraphPipeline:
         if not fact_ids:
             return []
         if self.reranker is not None:
-            order = self.reranker.rank(
-                question, [self.fact_text_by_id[item] for item in fact_ids]
-            )
+            order = self.reranker.rank(question, [self.fact_text_by_id[item] for item in fact_ids])
             return [fact_ids[index] for index in order]
         if not self.enable_remote_reranker:
             return fact_ids
@@ -270,7 +307,7 @@ class QMSGEGraphPipeline:
 
     def _best_path(self, node_ids: list[str]) -> list[str]:
         for left_index, left in enumerate(node_ids):
-            for right in node_ids[left_index + 1:]:
+            for right in node_ids[left_index + 1 :]:
                 try:
                     path = nx.shortest_path(self.artifacts.graph, left, right)
                 except (nx.NetworkXNoPath, nx.NodeNotFound):
@@ -294,7 +331,9 @@ class QMSGEGraphPipeline:
             affected = set(plan.affected_nodes)
             for band_name in ("raw", "low", "mid", "high", "full"):
                 for node_id in set(old_index) & set(new_index) - affected:
-                    recalculated[band_name][new_index[node_id]] = self.node_bands[band_name][old_index[node_id]]
+                    recalculated[band_name][new_index[node_id]] = self.node_bands[band_name][
+                        old_index[node_id]
+                    ]
         self.corpus = updated
         self.artifacts = new_artifacts
         self.node_ids = new_artifacts.node_ids
@@ -309,7 +348,9 @@ class QMSGEGraphPipeline:
 
 
 def _weighted_band_fusion(
-    band_hits: dict[str, list[SearchHit]], gate: torch.Tensor, top_k: int,
+    band_hits: dict[str, list[SearchHit]],
+    gate: torch.Tensor,
+    top_k: int,
 ) -> list[SearchHit]:
     totals: dict[str, float] = {}
     names = ("raw", "low", "mid", "high")

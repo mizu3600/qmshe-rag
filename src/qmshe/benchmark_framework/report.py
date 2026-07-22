@@ -99,7 +99,7 @@ def render_report(summary: dict[str, dict], manifest: dict) -> str:
             "",
             "## Efficiency, usage and reliability",
             "",
-            "| Method | Success | Total s/query | Index s | Retrieval s | Generation s | LLM calls | Embedding calls | Reranker calls | Total tokens | Prompt tokens | Completion tokens | Embedding tokens | API cost USD/query | Timing scope | Token mode |",
+            "| Method | Success | Total s/query | Index s | Retrieval s | Generation s | LLM calls | Embedding calls | Reranker calls | Observed tokens | Prompt tokens | Completion tokens | Embedding tokens | API cost USD/query | Timing scope | Token scope |",
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
         ]
     )

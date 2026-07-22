@@ -45,6 +45,10 @@ Dense 加入答案生成后约为 1.12 秒。HyperGraphRAG 与 PathRAG 的新记
 “复用既有官方索引后的 query-only”计时，分别约 1.99 秒和 1.44 秒，不可与
 包含建索引的历史 GraphRAG/LightRAG 总时间直接横向解释。
 
+报告中的 Token 是当前 trace 能观测到的 token，并不代表所有方法的完整消耗。
+GraphRAG/LightRAG 的历史建索引和查询 token 不可恢复，因此它们表中的数值
+主要来自共享答案生成，不能据此判断其比 BM25 或 Dense 更省 token。
+
 API 成本列只覆盖 DeepSeek 调用。SiliconFlow embedding 的 token 在提供方
 返回时已记录，但其价格未混入成本；历史 GraphRAG/LightRAG 的建索引 token
 也不可恢复，因此报告显示为 N/A/部分覆盖，而不是错误地填成 0。

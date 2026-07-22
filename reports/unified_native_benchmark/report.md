@@ -44,7 +44,7 @@
 
 ## Efficiency, usage and reliability
 
-| Method | Success | Total s/query | Index s | Retrieval s | Generation s | LLM calls | Embedding calls | Reranker calls | Total tokens | Prompt tokens | Completion tokens | Embedding tokens | API cost USD/query | Timing scope | Token mode |
+| Method | Success | Total s/query | Index s | Retrieval s | Generation s | LLM calls | Embedding calls | Reranker calls | Observed tokens | Prompt tokens | Completion tokens | Embedding tokens | API cost USD/query | Timing scope | Token scope |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
 | baseline:bm25 | 1.0000 | 0.9256 | N/A | 0.0002 | 0.9253 | 1.0000 | 0.0000 | 0.0000 | 845.1736 | 807.8854 | 37.2882 | 0.0000 | 0.000022 | query | measured |
 | baseline:dense_bge_m3 | 1.0000 | 1.1273 | N/A | 0.2116 | 0.9157 | 1.0000 | 1.0000 | 0.0000 | 2210.5833 | 757.2708 | 38.8924 | 1414.4201 | 0.000023 | query | measured |
