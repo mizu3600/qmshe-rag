@@ -1,5 +1,9 @@
 # Remote deployment and LoRA run
 
+> Current runtime policy: source and model artifacts for all three structures are retained, but
+> only `graph:reified_fact` is enabled by default. The verification notes below describe the
+> earlier dual-mode deployment and are retained as historical evidence.
+
 ## Deployment
 
 The project is deployed at:

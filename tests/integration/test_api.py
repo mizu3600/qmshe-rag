@@ -16,14 +16,19 @@ class LocalEncoder:
 
 def test_health_and_query_api():
     client = TestClient(app)
-    assert client.get("/health").status_code == 200
-    set_pipeline(QMSHEPipeline(make_synthetic_corpus(), text_encoder=LocalEncoder()))
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["active_profile"] == "reified_fact"
+    set_graph_pipeline(QMSGEGraphPipeline(
+        make_synthetic_corpus(), text_encoder=LocalEncoder(),
+        profile=GraphProfile.REIFIED_FACT,
+    ))
     response = client.post("/v1/query", json={"question": "How does PEAI improve Voc?", "top_k": 3, "return_debug": True})
     assert response.status_code == 200
     body = response.json()
     assert body["citations"]
     assert set(body["band_weights"]) == {"raw", "low", "mid", "high"}
-    assert body["relation_weights"]
+    assert body["profile"] == "reified_fact"
     evaluation = client.post("/v1/evaluate/run")
     assert evaluation.status_code == 200
     run_id = evaluation.json()["run_id"]
@@ -33,12 +38,15 @@ def test_health_and_query_api():
     assert metrics["p95_latency_ms"] >= 0
 
 
-def test_explicit_graph_api_routing_preserves_hypergraph_default():
+def test_disabled_runtime_modes_remain_present_but_require_opt_in():
     client = TestClient(app)
     corpus = make_synthetic_corpus()
     set_pipeline(QMSHEPipeline(corpus, text_encoder=LocalEncoder()))
     set_graph_pipeline(QMSGEGraphPipeline(
         corpus, text_encoder=LocalEncoder(), profile=GraphProfile.REIFIED_FACT
+    ))
+    set_graph_pipeline(QMSGEGraphPipeline(
+        corpus, text_encoder=LocalEncoder(), profile=GraphProfile.ENTITY_RELATION
     ))
     graph_response = client.post("/v1/query", json={
         "question": "How does PEAI improve Voc?",
@@ -51,7 +59,16 @@ def test_explicit_graph_api_routing_preserves_hypergraph_default():
     assert graph_response.json()["profile"] == "reified_fact"
 
     hypergraph_response = client.post("/v1/query", json={
-        "question": "How does PEAI improve Voc?", "top_k": 3
+        "question": "How does PEAI improve Voc?", "mode": "hypergraph", "top_k": 3
     })
-    assert hypergraph_response.status_code == 200
-    assert "retrieved_hyperedges" in hypergraph_response.json()
+    assert hypergraph_response.status_code == 409
+    assert "disabled" in hypergraph_response.json()["detail"]
+
+    entity_relation_response = client.post("/v1/query", json={
+        "question": "How does PEAI improve Voc?",
+        "mode": "graph",
+        "graph_profile": "entity_relation",
+        "top_k": 3,
+    })
+    assert entity_relation_response.status_code == 409
+    assert "disabled" in entity_relation_response.json()["detail"]

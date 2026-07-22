@@ -12,7 +12,10 @@ still require full datasets, valid API credentials, domain papers and expert gol
 5. Sparse incidence matrices, role matrices, Zhou and joint bipartite Laplacians.
 6. Learnable low/mid/high Chebyshev filters with raw semantic residual.
 7. Query seeds, query-conditioned four-way gate, entity/hyperedge joint embedding.
-8. Dense, QMSHE and BM25 retrieval, RRF, graph reranking and SiliconFlow reranking.
+8. Dense, QMSHE and BM25 retrieval, RRF and SiliconFlow reranking. The legacy
+   connectivity-based graph reranker remains available as an explicit opt-in,
+   but is disabled by default because controlled attribution found no benefit
+   for Entity-Relation and significant regressions for Reified-Fact and Hypergraph.
 9. Evidence verification, source-preserving context and citation-constrained generation.
 10. Training losses, dual hard negatives, evaluation metrics and baseline adapters.
 11. FastAPI endpoints, Docker Compose services and incremental-update policy.
@@ -20,6 +23,10 @@ still require full datasets, valid API credentials, domain papers and expert gol
 13. Public benchmark adapters, Stage A training, MLflow/DVC experiment tracking and ablation registry.
 14. PSC ontology, measurement normalization, quality audit and provenance-validated annotation store.
 15. Incremental approximate indexing, version compatibility, partition/coarse graph, cache and load test.
+
+The production API and CLI default to `graph:reified_fact`. Hypergraph and Entity-Relation remain
+available to training/evaluation code but are runtime-disabled unless their explicit environment
+opt-ins are set.
 
 ## Evidence boundary
 
